@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoadGuard MVP</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app-container">
+        <!-- Main Alert Banner Display (Hidden initially) -->
+        <div id="alert-banner" class="hidden">
+            ⚠️ POTHOLE AHEAD
+        </div>
+
+        <div class="video-container">
+            <!-- Video feed for webcam -->
+            <video id="camera-feed" autoplay playsinline muted></video>
+            <!-- Canvas to draw bounding boxes matching the video dimensions -->
+            <canvas id="detection-overlay"></canvas>
+            
+            <button id="start-btn" class="btn-primary">Start RoadGuard</button>
+        </div>
+
+        <div id="status-panel">
+            <div class="status-item">
+                <span class="label">GPS:</span>
+                <span id="gps-status" class="value waiting">Locating...</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Backend:</span>
+                <span id="backend-status" class="value waiting">Connecting...</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Nearby Potholes (50m):</span>
+                <span id="nearby-count" class="value">0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden canvas to capture frames from video -->
+    <canvas id="capture-canvas" style="display:none;"></canvas>
+
+    <script src="app.js"></script>
+</body>
+</html>
