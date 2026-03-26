@@ -124,11 +124,11 @@ async def detect_route(
         return {"error": str(e), "detected": False}
 
 @app.get("/api/nearby")
-def nearby_route(lat: float, lng: float):
+def nearby_route(lat: float, lng: float, radius: float = 50.0):
     """
-    Returns hazards within 50 meters of the provided coordinates.
+    Returns hazards within the designated custom radius.
     """
-    nearby = get_nearby(lat, lng, radius_meters=50.0)
+    nearby = get_nearby(lat, lng, radius_meters=radius)
     return {"hazards": nearby}
 
 @app.post("/api/validate")

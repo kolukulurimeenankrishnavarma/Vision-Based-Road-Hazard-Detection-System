@@ -10,7 +10,8 @@ const announcedHazards = new Set(); // Prevent audio spam
 // Settings State
 let settings = {
     audioAlerts: true,
-    visualAlerts: true
+    visualAlerts: true,
+    alertDistance: 50
 };
 
 // DOM Elements
@@ -107,6 +108,12 @@ opMode.addEventListener("change", (e) => {
 
 toggleVisual.addEventListener("change", (e) => settings.visualAlerts = e.target.checked);
 toggleAudio.addEventListener("change", (e) => settings.audioAlerts = e.target.checked);
+
+const alertDistSelect = document.getElementById("alert-distance");
+alertDistSelect.addEventListener("change", (e) => {
+    settings.alertDistance = parseInt(e.target.value);
+    document.querySelector("#nearby-card .label").textContent = `Nearby (${settings.alertDistance}m)`;
+});
 
 // Manual File Upload
 manualUpload.addEventListener("change", handleFileUpload);
@@ -421,6 +428,7 @@ async function startAlertLoop() {
                 const url = new URL(`${API_BASE}/api/nearby`);
                 url.searchParams.append('lat', currentLat);
                 url.searchParams.append('lng', currentLng);
+                url.searchParams.append('radius', settings.alertDistance);
 
                 const res = await fetch(url, {
                     headers: { 'ngrok-skip-browser-warning': 'true' }
@@ -440,7 +448,7 @@ async function startAlertLoop() {
                         activeHazardIds.add(p.id);
                         
                         // Check threat level
-                        if (p.distance <= 50) {
+                        if (p.distance <= settings.alertDistance) {
                             hasImminentThreat = true;
                             
                             // Audio Trigger: Output sound once per session per distinct hazard
