@@ -34,3 +34,11 @@ Thumbs.db
 *.pth
 *.weights
 *.onnx
+*.zip
+*.db
+*.sqlite3
+
+# Data directories
+backend/datasets/
+backend/static/
+backend/manual_uploads.json

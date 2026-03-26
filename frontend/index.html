@@ -2,46 +2,167 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RoadGuard MVP</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#050505">
+    <title>RoadGuard Live Map</title>
+    <!-- Leaflet & Routing CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+    <link rel="stylesheet" href="style.css?v=3">
+    <!-- Modern Typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- PWA Setup -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="RoadGuard">
 </head>
 <body>
     <div id="app-container">
-        <!-- Main Alert Banner Display (Hidden initially) -->
+        
+        <!-- Modern Glassmorphism Alert Banner (Hidden initially) -->
         <div id="alert-banner" class="hidden">
-            ⚠️ POTHOLE AHEAD
+            <div class="alert-content">
+                <div class="alert-icon-wrapper">
+                    <span class="alert-icon">⚠️</span>
+                </div>
+                <div class="alert-text-wrapper">
+                    <span class="alert-title">HEADS UP</span>
+                    <span class="alert-text">HAZARD AHEAD</span>
+                </div>
+            </div>
+            <div class="pulse-ring"></div>
         </div>
 
-        <div class="video-container">
-            <!-- Video feed for webcam -->
+        <!-- The Map (Background Layer) -->
+        <div id="map-container">
+            <div id="map"></div>
+        </div>
+
+        <!-- The Camera Feed (Hidden view layer) -->
+        <div id="camera-container" class="hidden-view">
             <video id="camera-feed" autoplay playsinline muted></video>
-            <!-- Canvas to draw bounding boxes matching the video dimensions -->
             <canvas id="detection-overlay"></canvas>
-            
-            <button id="start-btn" class="btn-primary">Start RoadGuard</button>
+            <canvas id="capture-canvas" style="display:none;"></canvas>
         </div>
+        
+        <!-- UI Dashboard Overlay -->
+        <div id="ui-dashboard">
+            <!-- Top Section -->
+            <div class="top-section">
+                <!-- Header Glass Panel -->
+                <div class="glass-panel header-panel">
+                    <div class="app-branding">
+                        <span class="logo-icon">🛡️</span>
+                        <h1>RoadGuard</h1>
+                    </div>
+                    <div class="header-controls">
+                        <div id="recording-indicator" class="live-indicator hidden">
+                            <span class="dot pulse"></span>
+                            <span class="text">REC</span>
+                        </div>
+                        <a href="admin.html" target="_blank" class="icon-btn" title="Admin Dashboard" style="text-decoration: none;">🔐</a>
+                        <button id="stop-btn" class="icon-btn hidden" title="Stop System" style="background: rgba(255,59,48,0.2); border-color: rgba(255,59,48,0.5);">⏹️</button>
+                        <button id="settings-btn" class="icon-btn" style="position:relative; z-index: 101;" title="Settings">⚙️</button>
+                    </div>
+                </div>
 
-        <div id="status-panel">
-            <div class="status-item">
-                <span class="label">GPS:</span>
-                <span id="gps-status" class="value waiting">Locating...</span>
+
             </div>
-            <div class="status-item">
-                <span class="label">Backend:</span>
-                <span id="backend-status" class="value waiting">Connecting...</span>
+
+            <!-- Settings Menu Popup (Redesigned as Centered Modal) -->
+            <div id="settings-menu" class="glass-panel hidden" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 9999; width: 320px; border-radius: 20px; padding: 25px; box-shadow: 0 20px 60px rgba(0,0,0,0.8);">
+                <h3 style="margin: 0 0 15px 0; font-size: 20px;">Settings</h3>
+                
+                <div class="setting-row" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 20px;">
+                    <span style="font-weight: 600;">Operation Mode</span>
+                    <select id="op-mode" style="width: 100%; padding: 10px; background: rgba(0,0,0,0.5); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; font-family: 'Outfit', sans-serif;">
+                        <option value="both">Alerts & Sending Data</option>
+                        <option value="alerts">Only Alerts</option>
+                        <option value="sending">Only Sending Data</option>
+                    </select>
+                </div>
+
+                <div class="setting-row">
+                    <span>Visual Alerts</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-visual" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="setting-row" style="margin-top:10px;">
+                    <span>Audio Alerts</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-audio" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="setting-row" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <span>Manual Video Upload</span>
+                    <input type="file" id="manual-upload" accept="video/mp4,video/x-m4v,video/*" class="file-input">
+                </div>
+                <button id="close-settings" class="btn-block" style="margin-top: 20px; background: #0071e3; border: none; font-size: 15px;">Apply & Close</button>
             </div>
-            <div class="status-item">
-                <span class="label">Nearby Potholes (50m):</span>
-                <span id="nearby-count" class="value">0</span>
+
+            <!-- Start Button Overlay (Center) -->
+            <div id="start-overlay" class="center-overlay">
+                <button id="start-btn" class="btn-premium">
+                    <span class="btn-text">INITIALIZE SYSTEM</span>
+                    <span class="btn-glow"></span>
+                </button>
+            </div>
+
+            <!-- Bottom Floating Controls -->
+            <div class="bottom-controls-wrapper">
+                
+                <!-- Status Glass Panel -->
+                <div id="status-panel" class="glass-panel">
+                    <div class="status-grid">
+                        <div class="status-card">
+                            <span class="icon">📍</span>
+                            <div class="info">
+                                <span class="label">GPS Fix</span>
+                                <span id="gps-status" class="value waiting">-</span>
+                            </div>
+                        </div>
+                        <div class="status-card">
+                            <span class="icon">🧠</span>
+                            <div class="info">
+                                <span class="label">AI</span>
+                                <span id="backend-status" class="value waiting">Offline</span>
+                            </div>
+                        </div>
+                        <div class="status-card highlight" id="nearby-card" style="grid-column: 1;">
+                            <span class="icon">⚠️</span>
+                            <div class="info">
+                                <span class="label">Nearby (50m)</span>
+                                <span id="nearby-count" class="value giant">0</span>
+                            </div>
+                        </div>
+                        <div class="status-card highlight" style="grid-column: 2;">
+                            <div class="icon">🎯</div>
+                            <div class="info">
+                                <span class="label">Total Detected</span>
+                                <span id="total-detected" class="value giant text-primary">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floating Action Buttons -->
+                <div id="action-controls">
+                    <button id="toggle-view-btn" class="btn-fab hidden-view" title="Toggle Camera/Map">
+                        <span id="toggle-icon" class="fab-icon">📸</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Hidden canvas to capture frames from video -->
-    <canvas id="capture-canvas" style="display:none;"></canvas>
-
-    <script src="app.js"></script>
+    <!-- Leaflet & Routing JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+    <script src="app.js?v=6"></script>
 </body>
 </html>
