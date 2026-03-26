@@ -46,7 +46,7 @@ def process_detection(lat, lng, confidence, class_id=0):
             min_dist = dist
             closest_hazard = p
 
-    if closest_hazard and min_dist <= 10.0:
+    if closest_hazard and min_dist <= 40.0:
         # Update existing hazard
         hid = closest_hazard['id']
         new_count = closest_hazard['detection_count'] + 1

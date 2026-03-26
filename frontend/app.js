@@ -463,7 +463,7 @@ async function startAlertLoop() {
                         }
                         
                         // Client-Side Validation check (auto-removal tagging)
-                        if (p.distance <= 15.0 && !lastDetectionResult && !validatedHazards.has(p.id)) {
+                        if (p.distance <= 25.0 && !lastDetectionResult && !validatedHazards.has(p.id)) {
                             validatedHazards.add(p.id);
                             const vData = new FormData();
                             vData.append("hazard_id", p.id);
