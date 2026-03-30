@@ -46,7 +46,7 @@ def process_detection(lat, lng, confidence, class_id=0):
             min_dist = dist
             closest_hazard = p
 
-    if closest_hazard and min_dist <= 40.0:
+    if closest_hazard and min_dist <= 10.0:
         # Update existing hazard
         hid = closest_hazard['id']
         new_count = closest_hazard['detection_count'] + 1
@@ -61,7 +61,7 @@ def process_detection(lat, lng, confidence, class_id=0):
             log_detection(hid, True)
             return {"status": "updated", "id": hid, "distance": min_dist, "class_id": class_id}
         except Exception as e:
-            print(f"Error updating hazard: {e}")
+            print(f"❌ Error updating hazard {hid}: {e}")
             return {"status": "error", "message": str(e)}
     else:
         # Insert new hazard
@@ -79,7 +79,7 @@ def process_detection(lat, lng, confidence, class_id=0):
             log_detection(hid, True)
             return {"status": "created", "id": hid, "class_id": class_id}
         except Exception as e:
-            print(f"Error inserting hazard: {e}")
+            print(f"❌ Error inserting NEW hazard: {e}")
             return {"status": "error", "message": str(e)}
 
 def get_nearby(lat, lng, radius_meters=50.0):
@@ -132,7 +132,12 @@ def get_hazard_classes():
 def add_hazard_class(class_id, name, alert_text, color_hex):
     if not supabase: return False
     try:
-        supabase.table("hazard_classes").upsert({
+        # Check if already exists to avoid PK violation
+        existing = supabase.table("hazard_classes").select("*").eq("class_id", class_id).execute()
+        if existing.data:
+            return True
+            
+        supabase.table("hazard_classes").insert({
             "class_id": class_id,
             "name": name,
             "alert_text": alert_text,
@@ -140,6 +145,7 @@ def add_hazard_class(class_id, name, alert_text, color_hex):
         }).execute()
         return True
     except Exception as e:
+        print(f"⚠️ Error syncing hazard class {class_id}: {e}")
         return False
 
 def get_all_hazards():

@@ -41,17 +41,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-os.makedirs("static/images", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Ensure required folders exist
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+IMAGES_DIR = os.path.join(STATIC_DIR, "images")
+
+if not os.path.exists(IMAGES_DIR):
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Load the YOLO Model
 MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "best.pt")
+CONF_THRESHOLD = float(os.getenv("YOLO_CONFIDENCE_THRESHOLD", 0.4))
+
 try:
     model = YOLO(MODEL_PATH)
     print(f"✅ Loaded YOLO model from {MODEL_PATH}")
+    print(f"🔍 Confidence threshold set to: {CONF_THRESHOLD}")
 except Exception as e:
     print(f"⚠️ Warning: Could not load YOLO model from {MODEL_PATH}: {e}")
     model = None
+
+# Initial sync of hazard classes on startup
+def sync_classes_on_start():
+    print("⏳ Syncing hazard classes with database...")
+    classes = get_hazard_classes()
+    for c in classes:
+        # Use class_id which is the correct column name in the database
+        known_classes.add(c.get("class_id") or c.get("id"))
+    print(f"✅ Class sync complete. Known Class IDs: {known_classes}")
+
+sync_classes_on_start()
+
+# Custom alerts mapping for distinct hazard types
+HAZARD_CONFIG = {
+    0: {"name": "Pothole", "alert": "Pothole ahead", "color": "#f85149"},
+    1: {"name": "Crack", "alert": "Road crack detected", "color": "#ff9900"},
+    2: {"name": "Manhole", "alert": "Approaching manhole", "color": "#2f81f7"}
+}
+
+# Auto-clear tracking history every 500 records to prevent stale data blocking
+def check_clear_tracks():
+    global processed_track_ids
+    if len(processed_track_ids) > 500:
+        print("🧹 Clearing stale tracking history...")
+        processed_track_ids.clear()
 
 @app.get("/api/status")
 def read_root():
@@ -63,6 +98,7 @@ async def detect_route(
     lng: float = Form(...),
     frame: UploadFile = File(...)
 ):
+    check_clear_tracks()
     try:
         if not model:
             return {"error": "Model not loaded", "detected": False}
@@ -75,44 +111,59 @@ async def detect_route(
         if img is None:
             return {"error": "Invalid image payload", "detected": False}
 
-        # Run YOLO inference with Object Tracking enabled
-        results = model.track(img, persist=True, tracker="botsort.yaml", verbose=False)
+        # Run YOLO inference with Object Tracking and higher resolution (1024)
+        results = model.track(img, persist=True, tracker="botsort.yaml", imgsz=1024, verbose=False)
         
         detected_new_hazards = False
         boxes_out = []
         
         for r in results:
             boxes = r.boxes
-            if boxes.id is None:
-                continue # No trackers assigned yet
-                
-            track_ids = boxes.id.int().cpu().tolist()
+            # Extract track IDs if available (boTSORT)
+            track_ids = boxes.id.int().cpu().tolist() if boxes.id is not None else [None] * len(boxes)
             
             for box, track_id in zip(boxes, track_ids):
                 conf = float(box.conf[0])
                 xyxy = box.xyxy[0].tolist()  # [xmin, ymin, xmax, ymax]
                 cls = int(box.cls[0])
                 
-                # Dynamically register new classes to DB to avoid Foreign Key errors
+                # Dynamically register new classes to DB with pretty labels (defaults to custom mapping)
                 if cls not in known_classes:
-                    cls_name = model.names[cls] if model is not None else f"Class {cls}"
-                    add_hazard_class(cls, str(cls_name).capitalize(), f"Alert: {cls_name}", "#ff9900")
+                    cfg = HAZARD_CONFIG.get(cls, {"name": f"Class {cls}", "alert": f"Hazard detected", "color": "#ff9900"})
+                    add_hazard_class(cls, cfg["name"], cfg["alert"], cfg["color"])
                     known_classes.add(cls)
                 
-                if conf > 0.4:  # confidence threshold for detection
+                if conf > CONF_THRESHOLD:
+                    print(f"🎯 Detected {model.names[cls]} at {conf:.2f} confidence")
                     boxes_out.append({"box": xyxy, "confidence": conf, "class": cls, "track_id": track_id})
                     
-                    # Check if this tracked object is new
-                    if track_id not in processed_track_ids:
-                        processed_track_ids.add(track_id)
+                    # Determine if we should save to DB
+                    should_save = False
+                    if track_id is not None:
+                        if track_id not in processed_track_ids:
+                            processed_track_ids.add(track_id)
+                            should_save = True
+                        else:
+                            print(f"⏭️  Skipping {model.names[cls]} (Already Tracked ID: {track_id})")
+                    else:
+                        # Fallback: If no track ID, save it anyway to ensure we don't miss data
+                        # We use a 1s cooldown or rely on DB deduplication
+                        should_save = True
+                        print(f"💾 Fallback Save (No Track ID assigned)")
+
+                    if should_save:
                         detected_new_hazards = True
-                        # Process individually
                         res = process_detection(lat, lng, conf, class_id=cls)
                         if res and res.get("id"):
                             hazard_id = res["id"]
+                            print(f"✅ Saved {model.names[cls]} to DB (ID: {hazard_id})")
                             # Draw bounding box and save image
                             cv2.rectangle(img, (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3])), (0, 0, 255), 2)
-                            cv2.imwrite(os.path.join("static", "images", f"{hazard_id}.jpg"), img)
+                            save_path = os.path.join(IMAGES_DIR, f"{hazard_id}.jpg")
+                            cv2.imwrite(save_path, img)
+                else:
+                    # Log rejections to terminal for diagnostics
+                    print(f"⚠️  Rejected {model.names[cls]} (Low Confidence: {conf:.2f})")
 
         return {
             "detected": detected_new_hazards, 
@@ -156,61 +207,17 @@ def add_classes_route(req: ClassRequest):
 
 @app.get("/admin/hazards")
 def get_all_hazards_route():
-    return {"hazards": get_all_hazards()}
+    hazards = get_all_hazards()
+    # Check for physical file existence to prevent Frontend 404s in terminal
+    for h in hazards:
+        photo_path = os.path.join(IMAGES_DIR, f"{h['id']}.jpg")
+        h["has_photo"] = os.path.exists(photo_path)
+    return {"hazards": hazards}
 
 @app.post("/admin/resolve/{hazard_id}")
 def resolve_hazard_route(hazard_id: str):
     success = resolve_hazard_admin(hazard_id)
     return {"status": "success"} if success else {"status": "error"}
-
-UPLOAD_JSON_FILE = "manual_uploads.json"
-
-def _load_uploads():
-    if not os.path.exists(UPLOAD_JSON_FILE):
-        return []
-    with open(UPLOAD_JSON_FILE, "r") as f:
-        return json.load(f)
-
-def _save_uploads(uploads):
-    with open(UPLOAD_JSON_FILE, "w") as f:
-        json.dump(uploads, f, indent=4)
-
-@app.get("/admin/uploads")
-def get_uploads_route():
-    return {"uploads": _load_uploads()}
-
-@app.post("/admin/uploads")
-async def create_upload_route(video: UploadFile = File(...)):
-    uploads = _load_uploads()
-    upload_id = str(uuid.uuid4())
-    new_upload = {
-        "id": upload_id,
-        "filename": video.filename,
-        "upload_date": datetime.datetime.utcnow().isoformat(),
-        "status": "active"
-    }
-    uploads.append(new_upload)
-    _save_uploads(uploads)
-    return {"status": "success", "upload": new_upload}
-
-@app.post("/admin/uploads/{upload_id}/deactivate")
-def deactivate_upload_route(upload_id: str):
-    uploads = _load_uploads()
-    for u in uploads:
-        if u["id"] == upload_id:
-            u["status"] = "inactive"
-            _save_uploads(uploads)
-            return {"status": "success"}
-    raise HTTPException(status_code=404, detail="Upload not found")
-
-@app.delete("/admin/uploads/{upload_id}")
-def delete_upload_route(upload_id: str):
-    uploads = _load_uploads()
-    filtered = [u for u in uploads if u["id"] != upload_id]
-    if len(filtered) == len(uploads):
-        raise HTTPException(status_code=404, detail="Upload not found")
-    _save_uploads(filtered)
-    return {"status": "success"}
 
 def get_local_ip():
     try:

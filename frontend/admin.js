@@ -39,11 +39,9 @@ let currentHazards = [];
 
 function initDashboard() {
     loadHazards();
-    loadUploads();
     
     // Refresh data periodically
     setInterval(loadHazards, 5000);
-    setInterval(loadUploads, 5000);
 }
 
 // ============== Hazards Management ==============
@@ -72,13 +70,14 @@ async function loadHazards() {
             row.innerHTML = `
                 <td style="font-family:monospace; font-size:12px; color:#8b949e;" title="${h.id}">${h.id.substring(0,8)}...</td>
                 <td>
-                    <a href="${imageUrl}" target="_blank">
-                        <img src="${imageUrl}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px; border: 1px solid #30363d;" onerror="this.style.display='none'">
+                    <a href="${h.has_photo ? imageUrl : '#'}" target="${h.has_photo ? '_blank' : '_self'}">
+                        <img src="${h.has_photo ? imageUrl : 'https://via.placeholder.com/60?text=No+Photo'}" 
+                             style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px; border: 1px solid #30363d;">
                     </a>
                 </td>
                 <td style="font-weight: 500;">${className}</td>
                 <td>${(h.confidence * 100).toFixed(1)}%</td>
-                <td style="font-family:monospace;">${h.lat.toFixed(5)}, ${h.lng.toFixed(5)}</td>
+                <td style="font-family:monospace;">${h.lat === 0 && h.lng === 0 ? 'NA' : h.lat.toFixed(5) + ', ' + h.lng.toFixed(5)}</td>
                 <td><span class="status-badge ${isResolved ? 'status-resolved' : 'status-active'}">${h.status}</span></td>
                 <td>
                     ${!isResolved ? `<button class="btn btn-outline" onclick="resolveHazard('${h.id}')">Mark Resolved</button>` : '—'}
@@ -141,57 +140,4 @@ document.getElementById('export-csv-btn').addEventListener('click', () => {
     document.body.removeChild(link);
 });
 
-// ============== Manual Uploads Management ==============
-async function loadUploads() {
-    try {
-        const res = await fetch(`${API_BASE}/uploads`);
-        const data = await res.json();
-        
-        const tbody = document.querySelector('#uploads-table tbody');
-        tbody.innerHTML = '';
-        
-        if(!data.uploads || data.uploads.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#8b949e;">No manual uploads found.</td></tr>';
-            return;
-        }
-
-        data.uploads.forEach(u => {
-            const isActive = u.status === 'active';
-            const statusClass = isActive ? 'status-active' : 'status-inactive';
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td style="font-family:monospace; font-size:12px; color:#8b949e;" title="${u.id}">${u.id.substring(0,8)}...</td>
-                <td style="font-weight: 500;">${u.filename}</td>
-                <td>${new Date(u.upload_date).toLocaleString()}</td>
-                <td><span class="status-badge ${statusClass}">${u.status}</span></td>
-                <td class="action-cell">
-                    ${isActive ? `<button class="btn btn-outline" onclick="deactivateUpload('${u.id}')">Deactivate</button>` : '—'}
-                    <button class="btn btn-danger" onclick="deleteUpload('${u.id}')">Delete</button>
-                </td>
-            `;
-            tbody.appendChild(row);
-        });
-    } catch (e) {
-        console.error("Failed to load uploads", e);
-    }
-}
-
-async function deactivateUpload(id) {
-    if(!confirm("Deactivate data from this manual upload?")) return;
-    try {
-        await fetch(`${API_BASE}/uploads/${id}/deactivate`, { method: 'POST' });
-        loadUploads();
-    } catch (e) {
-        alert("Action failed.");
-    }
-}
-
-async function deleteUpload(id) {
-    if(!confirm("Permanently delete this manual upload from records?")) return;
-    try {
-        await fetch(`${API_BASE}/uploads/${id}`, { method: 'DELETE' });
-        loadUploads();
-    } catch (e) {
-        alert("Action failed.");
-    }
-}
+window.resolveHazard = resolveHazard;

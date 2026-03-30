@@ -41,7 +41,6 @@ const settingsMenu = document.getElementById("settings-menu");
 const toggleVisual = document.getElementById("toggle-visual");
 const toggleAudio = document.getElementById("toggle-audio");
 const closeSettings = document.getElementById("close-settings");
-const manualUpload = document.getElementById("manual-upload");
 const stopBtn = document.getElementById("stop-btn");
 
 // Leaflet Map Data
@@ -115,8 +114,6 @@ alertDistSelect.addEventListener("change", (e) => {
     document.querySelector("#nearby-card .label").textContent = `Nearby (${settings.alertDistance}m)`;
 });
 
-// Manual File Upload
-manualUpload.addEventListener("change", handleFileUpload);
 
 function toggleView() {
     isCameraView = !isCameraView;
@@ -259,14 +256,21 @@ async function startCamera() {
         let stream;
         try {
             stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: { exact: "environment" } },
+                video: { 
+                    facingMode: { exact: "environment" },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                },
                 audio: false
             });
         } catch(e) {
             // Fallback to any camera if environment camera is not explicitly available
             console.warn("Could not get exact environment camera, falling back to any available video source.", e);
             stream = await navigator.mediaDevices.getUserMedia({
-                video: true,
+                video: { 
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                },
                 audio: false
             });
         }
@@ -292,50 +296,19 @@ async function startCamera() {
     }
 }
 
-async function handleFileUpload(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    backendStatus.textContent = "Processing Upload...";
-    backendStatus.className = "value active";
-
-    // Stop live tracking for the moment to favor video
-    toggleAudio.checked = false; // Mute until processed? User preference.
-    
-    // Send to the backend endpoint
-    try {
-        const formData = new FormData();
-        formData.append("video", file);
-        
-        const res = await fetch(`${API_BASE}/admin/uploads`, {
-            method: 'POST',
-            body: formData,
-            headers: { 'ngrok-skip-browser-warning': 'true' }
-        });
-        if(res.ok) {
-            alert("File uploaded successfully.");
-            backendStatus.textContent = "Upload Complete";
-        } else {
-            alert("Upload failed server-side.");
-            backendStatus.textContent = "Upload Failed";
-        }
-    } catch (e) {
-        console.error("Upload error:", e);
-        alert("Error connecting to server for upload.");
-        backendStatus.textContent = "Error";
-    }
-}
 
 
+let isProcessingFrame = false;
 // Detection Loop (Send Frames to Backend)
 async function startDetectionLoop() {
     while (isRunning) {
-        if (settings.mode !== "alerts" && currentLat && currentLng && video.readyState === video.HAVE_ENOUGH_DATA) {
+        if (!isProcessingFrame && settings.mode !== "alerts" && currentLat && currentLng && video.readyState === video.HAVE_ENOUGH_DATA) {
+            isProcessingFrame = true;
             captureCanvas.width = video.videoWidth;
             captureCanvas.height = video.videoHeight;
             captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
             
-            const blob = await new Promise(resolve => captureCanvas.toBlob(resolve, 'image/jpeg', 0.8));
+            const blob = await new Promise(resolve => captureCanvas.toBlob(resolve, 'image/jpeg', 0.9));
             
             if (blob) {
                 const formData = new FormData();
@@ -371,10 +344,12 @@ async function startDetectionLoop() {
                 } catch (e) {
                     backendStatus.textContent = `Offline: ${e.message}`;
                     backendStatus.className = "value alert";
+                } finally {
+                    isProcessingFrame = false;
                 }
             }
         }
-        await new Promise(r => setTimeout(r, 1000)); // ≈ 1 FPS
+        await new Promise(r => setTimeout(r, 33)); // Target 30 FPS
     }
 }
 
