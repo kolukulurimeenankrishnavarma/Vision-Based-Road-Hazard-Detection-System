@@ -94,6 +94,17 @@
                     </select>
                 </div>
 
+                <div class="setting-row" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 20px;">
+                    <span style="font-weight: 600;">Alert Cooldown Distance</span>
+                    <p style="font-size: 11px; margin: 0; color: #8b949e;">Min. distance between audio alerts for the same hazard type.</p>
+                    <select id="alert-cooldown" style="width: 100%; padding: 10px; background: rgba(0,0,0,0.5); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; font-family: 'Outfit', sans-serif;">
+                        <option value="10">10 meters</option>
+                        <option value="25" selected>25 meters (Default)</option>
+                        <option value="50">50 meters</option>
+                        <option value="100">100 meters</option>
+                    </select>
+                </div>
+
                 <div class="setting-row">
                     <span>Visual Alerts</span>
                     <label class="toggle-switch">

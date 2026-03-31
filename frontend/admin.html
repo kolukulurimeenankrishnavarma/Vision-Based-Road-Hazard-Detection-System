@@ -119,6 +119,7 @@
         }
         .status-active { background: rgba(248, 81, 73, 0.2); color: var(--danger); border: 1px solid var(--danger); }
         .status-resolved { background: rgba(35, 134, 54, 0.2); color: var(--success); border: 1px solid var(--success); }
+        .status-duplicate { background: rgba(210, 153, 34, 0.2); color: #d29922; border: 1px solid #d29922; }
         .status-inactive { background: rgba(139, 148, 158, 0.2); color: var(--text-muted); border: 1px solid var(--text-muted); }
         
         .action-cell {
@@ -161,6 +162,17 @@
             font-size: 1.1em;
             margin-top: 10px;
         }
+        
+        input[type="range"] {
+            padding: 0;
+            background: transparent;
+            border: none;
+            height: 4px;
+            width: 150px;
+            border-radius: 2px;
+            cursor: pointer;
+            outline: none;
+        }
 
     </style>
 </head>
@@ -190,7 +202,13 @@
                 <div class="panel">
                     <h2>
                         Detected Potholes
-                        <button id="export-csv-btn" class="btn">Download CSV</button>
+                        <div style="display: flex; align-items: center; gap: 20px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <label for="confidence-filter" style="margin: 0; font-size: 0.8em;">Min Confidence: <span id="conf-val" style="color: white; font-weight: 600;">0%</span></label>
+                                <input type="range" id="confidence-filter" min="0" max="100" value="0">
+                            </div>
+                            <button id="export-csv-btn" class="btn">Download CSV</button>
+                        </div>
                     </h2>
                     <div class="table-responsive">
                         <table id="hazards-table">
@@ -201,6 +219,7 @@
                                     <th>Type</th>
                                     <th>Confidence</th>
                                     <th>Coordinates (Lat, Lng)</th>
+                                    <th>Tag</th>
                                     <th>Status</th>
                                     <th>Action</th>
                                 </tr>

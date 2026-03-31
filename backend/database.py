@@ -36,51 +36,77 @@ def log_detection(hazard_id, detected=True):
 
 def process_detection(lat, lng, confidence, class_id=0):
     if not supabase: return {"status": "skipped_no_db"}
+    
+    # 1. Check for nearby active hazards to determine if this is a 'DUPLICATE' sighting
     active_hazards = get_active_hazards()
-    closest_hazard = None
-    min_dist = float('inf')
-
+    is_duplicate = False
+    
     for p in active_hazards:
         dist = haversine((lat, lng), (p['lat'], p['lng']), unit=Unit.METERS)
-        if dist < min_dist and p['class_id'] == class_id:
-            min_dist = dist
-            closest_hazard = p
+        if dist <= 10.0 and p['class_id'] == class_id:
+            is_duplicate = True
+            break
 
-    if closest_hazard and min_dist <= 10.0:
-        # Update existing hazard
-        hid = closest_hazard['id']
-        new_count = closest_hazard['detection_count'] + 1
+    tag = "DUPLICATE" if is_duplicate else "NEW"
+    
+    # 2. ALWAYS Insert a new record (as requested: 'upload everything')
+    try:
+        res = supabase.table("hazards").insert({
+            "lat": lat,
+            "lng": lng,
+            "class_id": class_id,
+            "confidence": confidence,
+            "detection_count": 1,
+            "miss_count": 0,
+            "status": "ACTIVE",
+            "tag": tag # We'll try to use a 'tag' column
+        }).execute()
         
+        if not res.data:
+             return {"status": "error", "message": "No data returned from insert"}
+             
+        hid = res.data[0]['id']
+        log_detection(hid, True)
+        return {"status": "created", "id": hid, "class_id": class_id, "tag": tag}
+        
+    except Exception as e:
+        # Fallback: if 'tag' column doesn't exist, we'll try without it and just log it
+        print(f"⚠️ Note: 'tag' column might not exist, trying without it. Error: {e}")
         try:
-            supabase.table("hazards").update({
-                "detection_count": new_count,
-                "miss_count": 0,
-                "last_detected": datetime.utcnow().isoformat()
-            }).eq("id", hid).execute()
-            
-            log_detection(hid, True)
-            return {"status": "updated", "id": hid, "distance": min_dist, "class_id": class_id}
-        except Exception as e:
-            print(f"❌ Error updating hazard {hid}: {e}")
-            return {"status": "error", "message": str(e)}
-    else:
-        # Insert new hazard
-        try:
-            res = supabase.table("hazards").insert({
+             res = supabase.table("hazards").insert({
                 "lat": lat,
                 "lng": lng,
                 "class_id": class_id,
                 "confidence": confidence,
                 "detection_count": 1,
                 "miss_count": 0,
-                "status": "ACTIVE"
+                "status": "ACTIVE" # Fixed: 'DUPLICATE' causes check constraint violation
             }).execute()
-            hid = res.data[0]['id']
-            log_detection(hid, True)
-            return {"status": "created", "id": hid, "class_id": class_id}
-        except Exception as e:
-            print(f"❌ Error inserting NEW hazard: {e}")
-            return {"status": "error", "message": str(e)}
+             hid = res.data[0]['id']
+             log_detection(hid, True)
+             return {"status": "created", "id": hid, "class_id": class_id, "tag": tag}
+        except Exception as e2:
+            print(f"❌ Error inserting hazard: {e2}")
+            # Fallback for foreign key violation if hazard_classes does not have the new class
+            if "hazards_class_id_fkey" in str(e2) and class_id != 0:
+                print(f"⚠️ Falling back class_id to 0 due to Supabase RLS policies on hazard_classes.")
+                try:
+                     res = supabase.table("hazards").insert({
+                        "lat": lat,
+                        "lng": lng,
+                        "class_id": 0, # Fallback Pothole
+                        "confidence": confidence,
+                        "detection_count": 1,
+                        "miss_count": 0,
+                        "status": "ACTIVE"
+                    }).execute()
+                     hid = res.data[0]['id']
+                     log_detection(hid, True)
+                     return {"status": "created", "id": hid, "class_id": 0, "tag": tag}
+                except Exception as e3:
+                     print(f"❌ Critical error inserting fallback hazard: {e3}")
+                     return {"status": "error", "message": str(e3)}
+            return {"status": "error", "message": str(e2)}
 
 def get_nearby(lat, lng, radius_meters=50.0):
     if not supabase: return []

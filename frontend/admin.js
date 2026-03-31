@@ -44,50 +44,80 @@ function initDashboard() {
     setInterval(loadHazards, 5000);
 }
 
+// ============== Confidence Filter ==============
+let minConfidenceFilter = 0;
+const confSlider = document.getElementById('confidence-filter');
+const confValLabel = document.getElementById('conf-val');
+
+if (confSlider) {
+    confSlider.addEventListener('input', (e) => {
+        minConfidenceFilter = parseInt(e.target.value, 10);
+        confValLabel.textContent = `${minConfidenceFilter}%`;
+        renderTable(); // Re-render instantly without waiting 5s
+    });
+}
+
 // ============== Hazards Management ==============
 async function loadHazards() {
     try {
         const res = await fetch(`${API_BASE}/hazards`);
         const data = await res.json();
         currentHazards = data.hazards || [];
-        
-        const tbody = document.querySelector('#hazards-table tbody');
-        tbody.innerHTML = '';
+        renderTable();
+    } catch (e) {
+        console.error("Failed to load hazards", e);
+    }
+}
 
-        if(currentHazards.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;">No potholes detected yet.</td></tr>';
-            return;
-        }
-        
-        currentHazards.forEach(h => {
+function renderTable() {
+    const tbody = document.querySelector('#hazards-table tbody');
+    tbody.innerHTML = '';
+
+    // Filter hazards based on confidence
+    const filteredHazards = currentHazards.filter(h => {
+        const confPct = (h.confidence || 0) * 100;
+        return confPct >= minConfidenceFilter;
+    });
+
+    if (filteredHazards.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#8b949e;">No hazards match the current filter.</td></tr>';
+        return;
+    }
+    
+    filteredHazards.forEach(h => {
             const isResolved = h.status === 'RESOLVED';
+            const isDuplicate = h.tag === 'DUPLICATE' || h.status === 'DUPLICATE';
             const className = h.hazard_classes ? h.hazard_classes.name : `Class ${h.class_id}`;
-            // Removed strict 'pothole' filter to allow generic COCO objects
             
-            const imageUrl = `${window.location.origin}/static/images/${h.id}.jpg`;
+            // Every record now has its own unique image named after the hazard ID
+            const hasPhoto = h.has_photo;
+            const imageUrl = hasPhoto ? `${window.location.origin}/static/images/${h.id}.jpg` : 'https://via.placeholder.com/60?text=No+Photo';
             
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td style="font-family:monospace; font-size:12px; color:#8b949e;" title="${h.id}">${h.id.substring(0,8)}...</td>
                 <td>
-                    <a href="${h.has_photo ? imageUrl : '#'}" target="${h.has_photo ? '_blank' : '_self'}">
-                        <img src="${h.has_photo ? imageUrl : 'https://via.placeholder.com/60?text=No+Photo'}" 
+                    ${hasPhoto ? `<a href="${imageUrl}" target="_blank">` : ''}
+                        <img src="${imageUrl}" 
+                             onerror="this.src='https://via.placeholder.com/60?text=No+Photo'"
                              style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px; border: 1px solid #30363d;">
-                    </a>
+                    ${hasPhoto ? `</a>` : ''}
                 </td>
                 <td style="font-weight: 500;">${className}</td>
-                <td>${(h.confidence * 100).toFixed(1)}%</td>
+                <td>${((h.confidence || 0) * 100).toFixed(1)}%</td>
                 <td style="font-family:monospace;">${h.lat === 0 && h.lng === 0 ? 'NA' : h.lat.toFixed(5) + ', ' + h.lng.toFixed(5)}</td>
+                <td>
+                    <span class="status-badge ${isDuplicate ? 'status-duplicate' : 'status-active'}">
+                        ${isDuplicate ? 'DUPLICATE' : 'NEW'}
+                    </span>
+                </td>
                 <td><span class="status-badge ${isResolved ? 'status-resolved' : 'status-active'}">${h.status}</span></td>
                 <td>
-                    ${!isResolved ? `<button class="btn btn-outline" onclick="resolveHazard('${h.id}')">Mark Resolved</button>` : '—'}
+                    ${!isResolved ? `<button class="btn btn-outline" onclick="resolveHazard('${h.id}')">Resolve</button>` : '—'}
                 </td>
             `;
             tbody.appendChild(row);
         });
-    } catch (e) {
-        console.error("Failed to load hazards", e);
-    }
 }
 
 async function resolveHazard(id) {

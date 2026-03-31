@@ -10,9 +10,10 @@ import cv2
 import numpy as np
 import os
 from ultralytics import YOLO
-from database import process_detection, get_nearby, validate_hazard, admin_login, get_hazard_classes, add_hazard_class, get_all_hazards, resolve_hazard_admin
+from database import process_detection, get_hazard_classes, add_hazard_class, get_nearby, get_all_hazards, resolve_hazard_admin
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import time
 
 load_dotenv()
 
@@ -111,56 +112,54 @@ async def detect_route(
         if img is None:
             return {"error": "Invalid image payload", "detected": False}
 
-        # Run YOLO inference with Object Tracking and higher resolution (1024)
-        results = model.track(img, persist=True, tracker="botsort.yaml", imgsz=1024, verbose=False)
+        # Run YOLO inference with standard Predict mode (STABLE - no OpenCV crashes)
+        results = model.predict(img, imgsz=640, conf=CONF_THRESHOLD, verbose=False)
         
         detected_new_hazards = False
         boxes_out = []
         
         for r in results:
             boxes = r.boxes
-            # Extract track IDs if available (boTSORT)
-            track_ids = boxes.id.int().cpu().tolist() if boxes.id is not None else [None] * len(boxes)
-            
-            for box, track_id in zip(boxes, track_ids):
+            for box in boxes:
                 conf = float(box.conf[0])
-                xyxy = box.xyxy[0].tolist()  # [xmin, ymin, xmax, ymax]
+                xyxy = box.xyxy[0].tolist()
                 cls = int(box.cls[0])
                 
-                # Dynamically register new classes to DB with pretty labels (defaults to custom mapping)
+                # Dynamically register new classes to DB
                 if cls not in known_classes:
                     cfg = HAZARD_CONFIG.get(cls, {"name": f"Class {cls}", "alert": f"Hazard detected", "color": "#ff9900"})
                     add_hazard_class(cls, cfg["name"], cfg["alert"], cfg["color"])
                     known_classes.add(cls)
                 
                 if conf > CONF_THRESHOLD:
-                    print(f"🎯 Detected {model.names[cls]} at {conf:.2f} confidence")
-                    boxes_out.append({"box": xyxy, "confidence": conf, "class": cls, "track_id": track_id})
+                    # 'Save Everything' - every valid frame is now a record
+                    detected_new_hazards = True
                     
-                    # Determine if we should save to DB
-                    should_save = False
-                    if track_id is not None:
-                        if track_id not in processed_track_ids:
-                            processed_track_ids.add(track_id)
-                            should_save = True
-                        else:
-                            print(f"⏭️  Skipping {model.names[cls]} (Already Tracked ID: {track_id})")
-                    else:
-                        # Fallback: If no track ID, save it anyway to ensure we don't miss data
-                        # We use a 1s cooldown or rely on DB deduplication
-                        should_save = True
-                        print(f"💾 Fallback Save (No Track ID assigned)")
-
-                    if should_save:
-                        detected_new_hazards = True
-                        res = process_detection(lat, lng, conf, class_id=cls)
-                        if res and res.get("id"):
-                            hazard_id = res["id"]
-                            print(f"✅ Saved {model.names[cls]} to DB (ID: {hazard_id})")
-                            # Draw bounding box and save image
-                            cv2.rectangle(img, (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3])), (0, 0, 255), 2)
-                            save_path = os.path.join(IMAGES_DIR, f"{hazard_id}.jpg")
-                            cv2.imwrite(save_path, img)
+                    # Process detection in DB (Spatial tagging happens inside)
+                    res = process_detection(lat, lng, conf, class_id=cls)
+                    
+                    if res and res.get("id"):
+                        hazard_id = res["id"]
+                        tag = res.get("tag", "NEW")
+                        print(f"🎯 {tag} Hazard Recorded: ID {hazard_id} ({conf:.2f})")
+                        
+                        # Draw bounding box on a copy of the image for the specific record
+                        annotated_img = img.copy()
+                        cv2.rectangle(annotated_img, (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3])), (0, 0, 255), 2)
+                        
+                        # Save unique image per detection record (compatible with frontend logic)
+                        save_filename = f"{hazard_id}.jpg"
+                        save_path = os.path.join(IMAGES_DIR, save_filename)
+                        cv2.imwrite(save_path, annotated_img)
+                        
+                        boxes_out.append({
+                            "box": xyxy, 
+                            "confidence": conf, 
+                            "class": cls, 
+                            "hazard_id": hazard_id,
+                            "tag": tag,
+                            "image": f"/static/images/{save_filename}"
+                        })
                 else:
                     # Log rejections to terminal for diagnostics
                     print(f"⚠️  Rejected {model.names[cls]} (Low Confidence: {conf:.2f})")

@@ -11,8 +11,29 @@ const announcedHazards = new Set(); // Prevent audio spam
 let settings = {
     audioAlerts: true,
     visualAlerts: true,
-    alertDistance: 50
+    alertDistance: 50,
+    alertCooldown: 25 // Default min distance between audio alerts of same type
 };
+
+const HAZARD_MAP = {
+    0: { name: "POTHOLE", color: "#f85149" },
+    1: { name: "CRACK", color: "#ff9900" },
+    2: { name: "MANHOLE", color: "#2f81f7" }
+};
+
+// Haversine Distance helper for Alert Cooldown functionality
+function computeDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // metres
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+let lastAlertLocations = {}; // { class_id: {lat, lng} }
 
 // DOM Elements
 const video = document.getElementById("camera-feed");
@@ -113,6 +134,13 @@ alertDistSelect.addEventListener("change", (e) => {
     settings.alertDistance = parseInt(e.target.value);
     document.querySelector("#nearby-card .label").textContent = `Nearby (${settings.alertDistance}m)`;
 });
+
+const alertCooldownSelect = document.getElementById("alert-cooldown");
+if (alertCooldownSelect) {
+    alertCooldownSelect.addEventListener("change", (e) => {
+        settings.alertCooldown = parseInt(e.target.value);
+    });
+}
 
 
 function toggleView() {
@@ -258,8 +286,8 @@ async function startCamera() {
             stream = await navigator.mediaDevices.getUserMedia({
                 video: { 
                     facingMode: { exact: "environment" },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
                 },
                 audio: false
             });
@@ -268,8 +296,8 @@ async function startCamera() {
             console.warn("Could not get exact environment camera, falling back to any available video source.", e);
             stream = await navigator.mediaDevices.getUserMedia({
                 video: { 
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
                 },
                 audio: false
             });
@@ -308,7 +336,7 @@ async function startDetectionLoop() {
             captureCanvas.height = video.videoHeight;
             captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
             
-            const blob = await new Promise(resolve => captureCanvas.toBlob(resolve, 'image/jpeg', 0.9));
+            const blob = await new Promise(resolve => captureCanvas.toBlob(resolve, 'image/jpeg', 0.7));
             
             if (blob) {
                 const formData = new FormData();
@@ -349,7 +377,7 @@ async function startDetectionLoop() {
                 }
             }
         }
-        await new Promise(r => setTimeout(r, 33)); // Target 30 FPS
+        await new Promise(r => setTimeout(r, 200)); // Target 5 FPS for stability
     }
 }
 
@@ -368,16 +396,17 @@ function drawBoxes(boxes) {
         ymin *= scaleY;
         ymax *= scaleY;
 
-        ctx.strokeStyle = "#f85149";
+        const cfg = HAZARD_MAP[b.class] || { name: "HAZARD", color: "#f85149" };
+
+        ctx.strokeStyle = cfg.color;
         ctx.lineWidth = 4;
         ctx.strokeRect(xmin, ymin, xmax - xmin, ymax - ymin);
         
-        ctx.fillStyle = "#f85149";
-        ctx.font = "bold 20px Inter";
         ctx.fillStyle = "rgba(0,0,0,0.7)";
-        ctx.fillRect(xmin, ymin - 30, 200, 30);
-        ctx.fillStyle = "#f85149";
-        ctx.fillText(`HAZARD ${(b.confidence * 100).toFixed(0)}%`, xmin + 5, ymin - 8);
+        ctx.font = "bold 20px Inter";
+        ctx.fillRect(xmin, ymin - 30, xmax - xmin > 140 ? xmax - xmin : 140, 30);
+        ctx.fillStyle = cfg.color;
+        ctx.fillText(`${cfg.name} ${(b.confidence * 100).toFixed(0)}%`, xmin + 5, ymin - 8);
     });
 }
 
@@ -426,9 +455,22 @@ async function startAlertLoop() {
                         if (p.distance <= settings.alertDistance) {
                             hasImminentThreat = true;
                             
-                            // Audio Trigger: Output sound once per session per distinct hazard
                             if (!announcedHazards.has(p.id)) {
-                                playAudioAlert(p.alert_text);
+                                let canAlert = true;
+                                const cid = p.class_id !== undefined ? p.class_id : 'unknown';
+                                
+                                if (lastAlertLocations[cid]) {
+                                    const distFromLast = computeDistance(currentLat, currentLng, lastAlertLocations[cid].lat, lastAlertLocations[cid].lng);
+                                    if (distFromLast < settings.alertCooldown) {
+                                        canAlert = false;
+                                    }
+                                }
+                                
+                                if (canAlert) {
+                                    playAudioAlert(p.alert_text);
+                                    lastAlertLocations[cid] = { lat: currentLat, lng: currentLng };
+                                }
+                                
                                 announcedHazards.add(p.id);
                             }
                         }
